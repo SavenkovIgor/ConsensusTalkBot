@@ -1,0 +1,6 @@
+.env
+venv/
+
+consensus_talk/
+
+.ipynb_checkpoints
