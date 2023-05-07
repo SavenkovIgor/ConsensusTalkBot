@@ -1,9 +1,8 @@
-# Consensus talk
+# Consensus talk Sandbox
 
-Consensus talk is a simple telegram bot that allows you to prettify your
-messages before sending them.
+It is a sandbox folder for consensus talk bot.
 
-## Local usage
+## Usage
 
 Create .env file with the following content:
 ```
@@ -12,11 +11,12 @@ OPENAI_API_KEY=<your openai api key>
 
 ```bash
 # Create the virtual environment
-python3 -m venv ConsensusTalk
+python3 -m venv ConsensusTalkSandbox
 
 # Activate the virtual environment
-source ConsensusTalk/bin/activate
+source ConsensusTalkSandbox/bin/activate
 
 # Install requirements
 pip install -r requirements.txt
 ```
+
