@@ -12,10 +12,10 @@ OPENAI_API_KEY=<your openai api key>
 
 ```bash
 # Create the virtual environment
-python3 -m venv consensus_talk
+python3 -m venv ConsensusTalk
 
 # Activate the virtual environment
-source consensus_talk/bin/activate
+source ConsensusTalk/bin/activate
 
 # Install requirements
 pip install -r requirements.txt
