@@ -111,7 +111,8 @@ def main() -> None:
 
     application.add_error_handler(error)
 
-    application.run_webhook(port=PORT, url_path=TELEGRAM_TOKEN, webhook_url='https://tg-multipurpose-bot.herokuapp.com/' + TELEGRAM_TOKEN)
+    # application.run_webhook(port=PORT, url_path=TELEGRAM_TOKEN, webhook_url='https://tg-multipurpose-bot.herokuapp.com/' + TELEGRAM_TOKEN)
+    application.run_polling()
 
 if __name__ == '__main__':
     main()
