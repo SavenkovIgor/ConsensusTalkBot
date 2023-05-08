@@ -34,12 +34,11 @@ class Chat:
         self.messages.append({"role": "user", "content": user_message})
 
     def get_completion(self):
-        response = openai.Completion.create(
-            engine=self.engine.model,
-            prompt=self.messages,
+        return openai.ChatCompletion.create(
+            model=self.engine.model,
+            messages=self.messages,
             temperature=self.engine.temp,
         )
-        return response
 
     def clear_messages(self):
         self.messages = []
