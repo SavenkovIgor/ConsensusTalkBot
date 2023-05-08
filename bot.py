@@ -1,4 +1,7 @@
-from telegram.ext import Updater, MessageHandler, CommandHandler,  Filters
+
+from telegram import ForceReply, Update
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+
 import logging
 import os
 import openai
@@ -18,100 +21,97 @@ class Chat:
     messages: list = []
     engine: ChatEngine
 
-    def __init__(self, engine, system_message, user_messages = []):
+    def __init__(self, engine):
         self.engine = engine
-        self.messages.append({"role": "system", "content": system_message})
-        self.messages.extend([{"role": "user", "content": message} for message in user_messages])
 
-    def get_answer(self, user_message):
+    def add_system_message(self, system_message):
+        self.messages.append({"role": "system", "content": system_message})
+
+    def add_assistant_message(self, assistant_message):
+        self.messages.append({"role": "assistant", "content": assistant_message})
+
+    def add_message(self, user_message):
         self.messages.append({"role": "user", "content": user_message})
-        response = openai.ChatCompletion.create(
-            model=self.engine.model,
-            messages=self.messages,
+
+    def get_completion(self):
+        response = openai.Completion.create(
+            engine=self.engine.model,
+            prompt=self.messages,
             temperature=self.engine.temp,
         )
-        answer = response.choices[0].message["content"]
-        self.messages.append({"role": "assistant", "content": answer})
-        return answer
+        return response
+
+    def clear_messages(self):
+        self.messages = []
+
 
 # Enable logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-
-PORT = int(os.environ.get('PORT', 5000))
 logger = logging.getLogger(__name__)
+
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 openai.api_key = os.getenv('OPENAI_API_KEY')
 
-def start(update, context):
-    update.message.reply_text('Hello, this is a bot to help you with your conversation skills. Please type /help to get started.')
+PORT = int(os.environ.get('PORT', 5000))
 
-def help(update, context):
-    update.message.reply_text('This is a bot to help you with your conversation skills. Please type /start to get started.')
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    await update.message.reply_html(
+        rf"Hello, {user.mention_html()}!\nthis is a bot to help you with your conversation skills",
+        reply_markup=ForceReply(selective=True)
+    )
 
-def test_echo(update, context):
-    update.message.reply_text(update.message.text)
+async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text('Available commands:\n/fix - fix your tone\n/start - start the bot\n/help - get help')
 
-def error(update, context):
+async def catch_all(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text('Sorry, I did not understand that command.')
+
+def error(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.warning('Update "%s" caused error "%s"', update, context.error)
 
-def fix_tone(update, context):
+async def fix_tone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message_versions_prompt = """
     You are a Conversation Improvement robot.Your main goal is, \
-    to support the truth seeking conversation style, \
-    your secondary goals is to try formulate messages in a  \
-    way that don't creates side conversations if possible, \
-    and replace thems definitions with more precise ones if necessary. \
-    Your message examples should be in the same language as user message. \
-    Take user message embrased with three backquotes, \
-    and create 3 different versions of this message.
+    to support the truth seeking conversation style.
 
-    Your output format is:
+    You should take user message and rewrite it, few times according to this rules: \
+    - Rewritten message must not move topic away from the main topic. \
+    - Rewritten message terms can be replaced with more precise ones if necessary. \
+    - Your answer should be in the user's language. \
+
+    Take user message and create 3 different versions of this message: \
+
+    Your output format should be:
     Restate version: <restate, localized version of the message>
 
     Polite version: <polite, localized version of the message>
 
     Validate version: <validate, localized version of the message>
-
-    {1}
-
-    User message: ```{0}```
     """
 
     engine = ChatEngine()
     user_message = update.message.text
-    chat = Chat(engine, message_versions_prompt.format(user_message, ""))
-    answer = chat.get_answer("")
-    update.message.reply_text(answer)
+    chat = Chat(engine)
+    chat.add_system_message(message_versions_prompt)
+    chat.add_message(user_message)
+    answer = chat.get_completion().choices[0].message["content"]
+    chat.clear_messages()
+    await update.message.reply_text(answer)
 
-def main():
-    """Start the bot."""
-    # Create the Updater and pass it your bot's token.
-    # Make sure to set use_context=True to use the new context based callbacks
-    # Post version 12 this will no longer be necessary
-    updater = Updater(TELEGRAM_TOKEN, use_context=True)
 
-    # Get the dispatcher to register handlers
-    dp = updater.dispatcher
+def main() -> None:
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("help", help))
-    dp.add_handler(CommandHandler("fix", fix_tone))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help))
+    application.add_handler(CommandHandler("fix", fix_tone))
 
-    dp.add_handler(MessageHandler(Filters.text, test_echo))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, catch_all))
 
-    dp.add_error_handler(error)
+    application.add_error_handler(error)
 
-    # Start the Bot
-    updater.start_webhook(listen="0.0.0.0",
-                          port=int(PORT),
-                          url_path=TELEGRAM_TOKEN)
-
-    updater.bot.setWebhook('https://tg-multipurpose-bot.herokuapp.com/' + TELEGRAM_TOKEN)
-
-    # Run the bot until you press Ctrl-C or the process receives SIGINT,
-    # SIGTERM or SIGABRT. This should be used most of the time, since
-    # start_polling() is non-blocking and will stop the bot gracefully.
-    updater.idle()
+    application.run_webhook(port=PORT, url_path=TELEGRAM_TOKEN, webhook_url='https://tg-multipurpose-bot.herokuapp.com/' + TELEGRAM_TOKEN)
 
 if __name__ == '__main__':
     main()
