@@ -113,7 +113,10 @@ prompts.load_prompts()
 
 
 def check_user(user_name: str) -> bool:
-    return user_name in allow_users_list
+    result: bool = user_name in allow_users_list
+    if not result:
+        logger.info(f'User {user_name} is not allowed to use this bot')
+    return result
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not check_user(update.effective_user.username):
@@ -128,6 +131,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     /start - restart the conversation
     /list - list all available roles
     /role role_name - set your role
+    /no_role - act as a regular chatGPT bot
     /clear - clear your role and restart the conversation
     """
     start_msg = start_msg.replace('    ', '')
@@ -159,6 +163,15 @@ async def role(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     answer = chat.get_completion().choices[0].message["content"]
     await update.message.reply_text(answer)
+
+async def no_role(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not check_user(update.effective_user.username):
+        await update.message.reply_text('Sorry, you are not allowed to use this bot')
+        return
+
+    chat.clear_messages()
+    chat.add_system_message('Act as a regular chatGPT bot')
+    await update.message.reply_text('GPT-3 chatbot mode activated')
 
 async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not check_user(update.effective_user.username):
@@ -198,12 +211,13 @@ def main() -> None:
         Prompts.download_csv()
 
     if len(sys.argv) == 1:
-        print('Starting telegram bot')
+        logger.info('Starting telegram bot')
         app = Application.builder().token(TELEGRAM_TOKEN).build()
 
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("list", role_list))
         app.add_handler(CommandHandler("role", role))
+        app.add_handler(CommandHandler("no_role", no_role))
         app.add_handler(CommandHandler("clear", clear))
 
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, catch_all))
