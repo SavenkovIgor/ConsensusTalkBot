@@ -10,7 +10,7 @@ import requests as req
 from dotenv import load_dotenv, find_dotenv
 _ = load_dotenv(find_dotenv())
 
-class PromptsLib:
+class PromptsCollection:
     csv_file: str = 'prompts.csv'
     prompts: dict = {}
 
@@ -53,11 +53,11 @@ class PromptsLib:
         """
         self.prompts['Tone editor'] = message_versions_prompt
 
-    def actors(self) -> list:
+    def roles(self) -> list:
         return list(self.prompts.keys())
 
-    def prompt(self, act: str) -> str:
-        return self.prompts[act]
+    def role_prompt(self, role: str) -> str:
+        return self.prompts[role]
 
 class ChatEngine:
     model: str
@@ -101,104 +101,116 @@ class Chat:
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TELEGRAM_TOKEN   = os.getenv('TELEGRAM_TOKEN')
-openai.api_key   = os.getenv('OPENAI_API_KEY')
-allow_users_list = os.getenv('ALLOW_USERS_LIST').split(',')
+openai.api_key = os.getenv('OPENAI_API_KEY')
 
-PORT = int(os.environ.get('PORT', 5000))
+class ConsensusTalkBot:
+    logger: logging.Logger
+    bot: Application
+    allow_users_list: list[str] = os.getenv('ALLOW_USERS_LIST').split(',')
+    prompts = PromptsCollection()
+    chat: Chat = Chat(ChatEngine())
 
-chat = Chat(ChatEngine())
-prompts = PromptsLib()
-prompts.load_prompts()
+    def __init__(self, logger: logging.Logger, token: str) -> None:
+        self.logger = logger
+        self.prompts.load_prompts()
 
+        self.bot = Application.builder().token(token).build()
 
-def check_user(user_name: str) -> bool:
-    result: bool = user_name in allow_users_list
-    if not result:
-        logger.info(f'User {user_name} is not allowed to use this bot')
-    return result
+        self.bot.add_handler(CommandHandler("start", self.start))
+        self.bot.add_handler(CommandHandler("list", self.role_list))
+        self.bot.add_handler(CommandHandler("role", self.role))
+        self.bot.add_handler(CommandHandler("no_role", self.no_role))
+        self.bot.add_handler(CommandHandler("clear", self.clear))
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not check_user(update.effective_user.username):
-        await update.message.reply_text('Sorry, you are not allowed to use this bot')
-        return
+        self.bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.catch_all))
+        self.bot.add_error_handler(self.error)
 
-    user = update.effective_user
-    start_msg: str = f"""
-    Hello, {user.mention_html()}!
-    This is a chat bot with different roles.
-    Available commands:
-    /start - restart the conversation
-    /list - list all available roles
-    /role role_name - set your role
-    /no_role - act as a regular chatGPT bot
-    /clear - clear your role and restart the conversation
-    """
-    start_msg = start_msg.replace('    ', '')
-    await update.message.reply_html(start_msg, reply_markup = ForceReply(selective=True))
+    def start_bot(self):
+        self.logger.info('Starting telegram bot')
+        self.bot.run_polling()
 
-async def role_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not check_user(update.effective_user.username):
-        await update.message.reply_text('Sorry, you are not allowed to use this bot')
-        return
+    async def check_user(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+        user_name: str = update.effective_user.username
+        result: bool = user_name in self.allow_users_list
+        if not result:
+            await update.message.reply_text('Sorry, you are not allowed to use this bot')
+        return result
 
-    await update.message.reply_text('Available roles: \n' + '\n'.join(prompts.actors()))
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self.check_user(update, context):
+            return
 
-async def role(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not check_user(update.effective_user.username):
-        await update.message.reply_text('Sorry, you are not allowed to use this bot')
-        return
+        start_msg: str = f"""
+        Hello, {update.effective_user.mention_html()}!
+        This is a chat bot with different roles.
+        Available commands:
+        /start - restart the conversation
+        /list - list all available roles
+        /role role_name - set your role
+        /no_role - act as a regular chatGPT bot
+        /clear - clear your role and restart the conversation
+        """
+        start_msg = start_msg.replace('    ', '')
 
-    user_message = update.message.text
-    user_message = user_message.replace('/role ', '').strip()
+        await update.message.reply_html(start_msg, reply_markup = ForceReply(selective=True))
 
-    if user_message not in prompts.actors():
-        await update.message.reply_text('Role not found')
-        return
+    async def role_list(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self.check_user(update, context):
+            return
 
-    chat.clear_messages()
-    role_prompt = prompts.prompt(user_message)
-    chat.add_system_message(role_prompt)
-    await update.message.reply_text('Role start prompt is:' + '\n' + role_prompt)
+        await update.message.reply_text('Available roles: \n' + '\n'.join(self.prompts.roles()))
 
-    answer = chat.get_completion().choices[0].message["content"]
-    await update.message.reply_text(answer)
+    async def role(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self.check_user(update, context):
+            return
 
-async def no_role(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not check_user(update.effective_user.username):
-        await update.message.reply_text('Sorry, you are not allowed to use this bot')
-        return
+        requested_role = update.message.text
+        requested_role = requested_role.replace('/role ', '').strip()
 
-    chat.clear_messages()
-    chat.add_system_message('Act as a regular chatGPT bot')
-    await update.message.reply_text('GPT-3 chatbot mode activated')
+        if requested_role not in self.prompts.roles():
+            await update.message.reply_text('Role not found')
+            return
 
-async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not check_user(update.effective_user.username):
-        await update.message.reply_text('Sorry, you are not allowed to use this bot')
-        return
+        self.chat.clear_messages()
+        role_prompt = self.prompts.role_prompt(requested_role)
+        self.chat.add_system_message(role_prompt)
+        await update.message.reply_text('Role start prompt is:' + '\n' + role_prompt)
 
-    chat.clear_messages()
-    await update.message.reply_text('Chat cleared')
+        answer = self.chat.get_completion().choices[0].message["content"]
+        await update.message.reply_text(answer)
 
-async def catch_all(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not check_user(update.effective_user.username):
-        await update.message.reply_text('Sorry, you are not allowed to use this bot')
-        return
+    async def no_role(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self.check_user(update, context):
+            return
 
-    user_message: str = update.message.text
-    answer: str = ''
+        self.chat.clear_messages()
+        self.chat.add_system_message('Act as a regular chatGPT bot')
+        await update.message.reply_text('GPT-3 chatbot mode activated')
 
-    if chat.has_messages():
-        chat.add_message(user_message)
-        answer = chat.get_completion().choices[0].message["content"]
-    else:
-        answer = 'Please set your role first'
+    async def catch_all(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self.check_user(update, context):
+            return
 
-    await update.message.reply_text(answer)
+        user_message: str = update.message.text
+        answer: str = ''
 
-def error(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.warning('Update "%s" caused error "%s"', update, context.error)
+        if self.chat.has_messages():
+            self.chat.add_message(user_message)
+            answer = self.chat.get_completion().choices[0].message["content"]
+        else:
+            answer = 'Please set your role first'
+
+        await update.message.reply_text(answer)
+
+    async def clear(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self.check_user(update, context):
+            return
+
+        self.chat.clear_messages()
+        await update.message.reply_text('Chat cleared')
+
+    def error(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        self.logger.warning('Update "%s" caused error "%s"', update, context.error)
 
 
 def main() -> None:
@@ -208,23 +220,11 @@ def main() -> None:
     args = args.parse_args()
 
     if args.download_prompts:
-        Prompts.download_csv()
+        PromptsCollection().download_csv()
 
     if len(sys.argv) == 1:
-        logger.info('Starting telegram bot')
-        app = Application.builder().token(TELEGRAM_TOKEN).build()
-
-        app.add_handler(CommandHandler("start", start))
-        app.add_handler(CommandHandler("list", role_list))
-        app.add_handler(CommandHandler("role", role))
-        app.add_handler(CommandHandler("no_role", no_role))
-        app.add_handler(CommandHandler("clear", clear))
-
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, catch_all))
-
-        app.add_error_handler(error)
-
-        app.run_polling()
+        bot = ConsensusTalkBot(logger, os.getenv('TELEGRAM_TOKEN'))
+        bot.start_bot()
 
 if __name__ == '__main__':
     main()
